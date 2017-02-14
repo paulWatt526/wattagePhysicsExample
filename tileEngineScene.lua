@@ -1,4 +1,6 @@
-local Composer = require( "composer" )
+local AnalogControlStick = require "analogControlStick"
+local Composer = require "composer"
+local Physics = require "physics"
 local TileEngine = require "plugin.wattageTileEngine"
 
 local scene = Composer.newScene()
@@ -25,12 +27,20 @@ local ENVIRONMENT = {
     {2,2,2,2,2,1,1,1,1,1,2,2,2,2,2},
 }
 
+local TILE_SIZE         = 32                -- Constant for the tile size
 local ROW_COUNT         = #ENVIRONMENT      -- Row count of the environment
 local COLUMN_COUNT      = #ENVIRONMENT[1]   -- Column count of the environment
+local MAX_FORCE         = 10                -- The maximum force that will be applied to the player entity
+local LINEAR_DAMPING    = 1                 -- Provides a little resistance to linear motion.
+
+local playerCategory = {categoryBits=1, maskBits=2} -- Category for the player physics object.  Will collide with walls.
+local wallCategory = {categoryBits=2, maskBits=1}   -- Category for the wall physics objects.  Will collide with players.
 
 local tileEngine                            -- Reference to the tile engine
 local lightingModel                         -- Reference to the lighting model
 local tileEngineViewControl                 -- Reference to the UI view control
+local controlStick                          -- Reference to the control stick
+local playerSprite                          -- Reference to the player sprite
 local lastTime                              -- Used to track how much time passes between frames
 
 -- -----------------------------------------------------------------------------------
@@ -55,6 +65,33 @@ spriteResolver.resolveForKey = function(key)
         width = frame.width,
         height = frame.height
     })
+end
+
+-- -----------------------------------------------------------------------------------
+-- A helper function to set up the physical environment.  This will add a static
+-- box physics object for each wall tile.
+-- -----------------------------------------------------------------------------------
+local function addPhysicsObjectsForWalls(displayGroup, module)
+    for row=1,ROW_COUNT do
+        for col=1,COLUMN_COUNT do
+            local value = ENVIRONMENT[row][col]
+            if value == 1 then
+                local displayObject = display.newRect(
+                    displayGroup,
+                    (col - 1) * TILE_SIZE + TILE_SIZE / 2,
+                    (row - 1) * TILE_SIZE + TILE_SIZE / 2,
+                    TILE_SIZE,
+                    TILE_SIZE)
+                displayObject.isVisible = false
+                Physics.addBody(displayObject, "static", {
+                    density=0.1,
+                    friction=0.1,
+                    filter=wallCategory
+                })
+                module.addPhysicsBody(displayObject)
+            end
+        end
+    end
 end
 
 -- -----------------------------------------------------------------------------------
@@ -132,6 +169,23 @@ local function onFrame(event)
         local deltaTime = curTime - lastTime
         lastTime = curTime
 
+        -- Get the direction vectors from the control stick
+        local uncappedPercentVector, cappedPercentVector = controlStick.getCurrentValues()
+
+        -- If the control stick is currently being pressed, then apply the appropriate force
+        if cappedPercentVector ~= nil then
+            -- Determine the percent of max force to apply.  The magnitude of the vector from the
+            -- conrol stick indicates the percentate of the max force to apply.
+            local forceVector = cappedPercentVector.scalarMultiply(MAX_FORCE)
+            -- Apply the force to the center of the player entity.
+            playerSprite:applyForce(forceVector.getX(), forceVector.getY(), playerSprite.x, playerSprite.y)
+        end
+
+        -- Have the camera follow the player
+        local tileXCoord = playerSprite.x / TILE_SIZE
+        local tileYCoord = playerSprite.y / TILE_SIZE
+        camera.setLocation(tileXCoord, tileYCoord)
+
         -- Update the lighting model passing the amount of time that has passed since
         -- the last frame.
         lightingModel.update(deltaTime)
@@ -164,13 +218,20 @@ end
 function scene:create( event )
     local sceneGroup = self.view
 
+    -- Start physics
+    Physics.start()
+    -- This example does not want any gravity, set it to 0.
+    Physics.setGravity(0,0)
+    -- Set scale (determined by trial and error for what feels right)
+    Physics.setScale(32)
+
     -- Create a group to act as the parent group for all tile engine DisplayObjects.
     local tileEngineLayer = display.newGroup()
 
     -- Create an instance of TileEngine.
     tileEngine = TileEngine.Engine.new({
         parentGroup=tileEngineLayer,
-        tileSize=32,
+        tileSize=TILE_SIZE,
         spriteResolver=spriteResolver,
         compensateLightingForViewingPosition=false,
         hideOutOfSightElements=false
@@ -214,9 +275,48 @@ function scene:create( event )
     -- delay (especially for larger scenes).
     floorLayer.resetDirtyTileCollection()
 
+    -- Add physics objects for the walls
+    addPhysicsObjectsForWalls(sceneGroup, module)
+
     -- Add the layer to the module at index 1 (indexes start at 1, not 0).  Set
     -- the scaling delta to zero.
     module.insertLayerAtIndex(floorLayer, 1, 0)
+
+    -- Add an entity layer for the player
+    local entityLayer = TileEngine.EntityLayer.new({
+        tileSize = TILE_SIZE,
+        spriteResolver = spriteResolver
+    })
+
+    -- Add the player entity to the entity layer
+    local entityId, spriteInfo = entityLayer.addEntity("tiles_2")
+
+    -- Move the player entity to the center of the environment.
+    entityLayer.centerEntityOnTile(entityId, 8, 8)
+
+    -- Store a reference to the player entity sprite.  It will be
+    -- used to apply forces to and to align the camera with.
+    playerSprite = spriteInfo.imageRect
+
+    -- Make the player sprite a physical entity
+    Physics.addBody(playerSprite, "dynamic", {
+        density=1,
+        friction=0.5,
+        bounce=0.2,
+        radius=12,
+        filter= playerCategory
+    })
+
+    -- Handle the player sprite as a bullet to prevent passing through walls
+    -- when moving very quickly.
+    playerSprite.isBullet = true
+
+    -- This will prevent the player from "sliding" too much.
+    playerSprite.linearDamping = LINEAR_DAMPING
+
+    -- Add the entity layer to the module at index 2 (indexes start at 1, not 0).  Set
+    -- the scaling delta to zero.
+    module.insertLayerAtIndex(entityLayer, 2, 0)
 
     -- Add the module to the engine.
     tileEngine.addModule({module = module})
@@ -240,6 +340,15 @@ function scene:create( event )
 
     -- Finally, set the ambient light to white light with medium-high intensity.
     lightingModel.setAmbientLight(1,1,1,0.7)
+
+    local radius = 150
+    controlStick = AnalogControlStick.new({
+        parentGroup = sceneGroup,
+        centerX = display.screenOriginX + radius,
+        centerY = display.screenOriginY + display.viewableContentHeight - radius,
+        centerDotRadius = 0.1 * radius,
+        outerCircleRadius = radius
+    })
 end
 
 
