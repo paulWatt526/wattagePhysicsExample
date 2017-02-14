@@ -402,6 +402,9 @@ function scene:destroy( event )
     tileEngineViewControl.destroy()
     tileEngineViewControl = nil
 
+    controlStick.destroy()
+    controlStick = nil
+
     -- Set the reference to the lighting model to nil.
     lightingModel = nil
 end
