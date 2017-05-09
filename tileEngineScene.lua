@@ -170,15 +170,16 @@ local function onFrame(event)
         lastTime = curTime
 
         -- Get the direction vectors from the control stick
-        local uncappedPercentVector, cappedPercentVector = controlStick.getCurrentValues()
+        local cappedPercentVector = controlStick.getCurrentValues().cappedDirectionVector
 
         -- If the control stick is currently being pressed, then apply the appropriate force
-        if cappedPercentVector ~= nil then
+        if cappedPercentVector.x ~= nil and cappedPercentVector.y ~= nil then
             -- Determine the percent of max force to apply.  The magnitude of the vector from the
             -- conrol stick indicates the percentate of the max force to apply.
-            local forceVector = cappedPercentVector.scalarMultiply(MAX_FORCE)
+            local forceVectorX = cappedPercentVector.x * MAX_FORCE
+            local forceVectorY = cappedPercentVector.y * MAX_FORCE
             -- Apply the force to the center of the player entity.
-            playerSprite:applyForce(forceVector.getX(), forceVector.getY(), playerSprite.x, playerSprite.y)
+            playerSprite:applyForce(forceVectorX, forceVectorY, playerSprite.x, playerSprite.y)
         end
 
         -- Have the camera follow the player
