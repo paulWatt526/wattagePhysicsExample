@@ -35,13 +35,4 @@ settings =
 			},
 		},
 	},
-	plugins =
-    {
-        -- key is the name passed to Lua's 'require()'
-        ["plugin.wattageTileEngine"] =
-        {
-            -- required
-            publisherId = "com.blindprophetsoftware",
-        },
-    },
 }
